@@ -69,7 +69,16 @@ impl Editor {
 
                     return Ok(true);
                 }
-
+                KeyEvent {
+                    code: code @ (KeyCode::Char(..) | KeyCode::Tab),
+                    modifiers: KeyModifiers::NONE,
+                } => {
+                    self.output.insert_char(match code {
+                        KeyCode::Char(c) => c,
+                        KeyCode::Tab => '\t',
+                        _ => unreachable!(),
+                    });
+                }
                 _ => return Ok(true),
             };
         }

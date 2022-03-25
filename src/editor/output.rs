@@ -19,13 +19,14 @@ pub mod cursor_controller;
 static VERSION: &str = "0.1.0";
 static TAB_STOP: usize = 8;
 
+#[derive(Default)]
 struct Row {
-    row_content: Box<str>,
+    row_content: String,
     render: String,
 }
 
 impl Row {
-    fn new(row_content: Box<str>, render: String) -> Self {
+    fn new(row_content: String, render: String) -> Self {
         Self {
             row_content,
             render,
@@ -34,6 +35,11 @@ impl Row {
 
     fn len(&self) -> usize {
         self.row_content.len()
+    }
+
+    fn insert_char(&mut self, at: usize, ch: char) {
+        self.row_content.insert(at, ch);
+        EditorRows::render_row(self)
     }
 }
 
@@ -176,6 +182,14 @@ impl EditorRows {
     fn get_editor_row(&self, at: usize) -> &Row {
         &self.row_contents[at] /* modify */
     }
+
+    fn insert_row(&mut self) {
+        self.row_contents.push(Row::default());
+    }
+
+    fn get_editor_row_mut(&mut self, at: usize) -> &mut Row {
+        &mut self.row_contents[at]
+    }
 }
 
 /// This is a consumer.
@@ -301,6 +315,16 @@ impl Output {
             let len = cmp::min(message.len(), self.win_size.0);
             self.editor_contents.push_str(&message[..len]);
         }
+    }
+
+    pub fn insert_char(&mut self, ch: char) {
+        if self.cursor_controller.cursor_y == self.editor_rows.number_of_rows() {
+            self.editor_rows.insert_row()
+        }
+        self.editor_rows
+            .get_editor_row_mut(self.cursor_controller.cursor_y)
+            .insert_char(self.cursor_controller.cursor_x, ch);
+        self.cursor_controller.cursor_x += 1;
     }
 
     /// refresh screen
