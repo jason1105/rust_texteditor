@@ -1,4 +1,4 @@
-use std::cmp;
+use std::{cmp, path::PathBuf};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -35,10 +35,12 @@ impl Editor {
                 } => {
                     /* add following */
                     if self.output.dirty > 0 && self.quit_times > 0 {
-                        self.output.status_message.set_message(format!(
-                        "WARNING!!! File has unsaved changes. Press Ctrl-Q {} more times to quit.",
-                        self.quit_times
-                    ));
+                        self.output.status_message.set_message(
+                            format!(
+                            "WARNING!!! File has unsaved changes. Press Ctrl-Q {} more times to quit.",
+                            self.quit_times
+                            )
+                        );
                         self.quit_times -= 1;
                         return Ok(true);
                     }
@@ -83,12 +85,26 @@ impl Editor {
                 KeyEvent {
                     code: KeyCode::Char('s'),
                     modifiers: KeyModifiers::CONTROL,
-                } => self.output.editor_rows.save().map(|size| {
-                    self.output
-                        .status_message
-                        .set_message(format!("{} bytes written", size));
-                    self.output.dirty = 0;
-                })?,
+                } => {
+                    use crate::prompt;
+                    if matches!(self.output.editor_rows.filename, None) {
+                        let file_name: Option<PathBuf> =
+                            prompt!(&mut self.output, "Save as : {}").map(|p| p.into());
+                        if let None = file_name {
+                            self.output
+                                .status_message
+                                .set_message("Save Aborted".into());
+                            return Ok(true);
+                        }
+                        self.output.editor_rows.filename = file_name;
+                    }
+                    self.output.editor_rows.save().map(|size| {
+                        self.output
+                            .status_message
+                            .set_message(format!("{} bytes written", size));
+                        self.output.dirty = 0;
+                    })?
+                }
                 KeyEvent {
                     code: key @ (KeyCode::Backspace | KeyCode::Delete),
                     modifiers: KeyModifiers::NONE,
@@ -98,6 +114,10 @@ impl Editor {
                     }
                     self.output.delete_char()
                 }
+                KeyEvent {
+                    code: KeyCode::Enter,
+                    modifiers: KeyModifiers::NONE,
+                } => self.output.insert_newline(),
                 KeyEvent {
                     code: code @ (KeyCode::Char(..) | KeyCode::Tab),
                     modifiers: KeyModifiers::NONE | KeyModifiers::SHIFT,
@@ -119,4 +139,52 @@ impl Editor {
         self.output.refresh_screen()?;
         self.process_key()
     }
+}
+
+#[macro_export]
+macro_rules! prompt {
+    ($output:expr,$($args:tt)*) => {{
+        use self::{output::Output, reader::Reader};
+        let output: &mut Output = $output;
+        let mut input = String::with_capacity(32);
+        loop {
+            output.status_message.set_message(format!($($args)*, input));
+            output.refresh_screen()?;
+            if let Ok(key_event) = Reader.read_key() {
+                match key_event {
+                    KeyEvent {
+                        code: KeyCode::Char(c),
+                        modifiers: KeyModifiers::NONE | KeyModifiers::SHIFT,
+                    } => {
+                        if c == '\x1b' {
+                            break;
+                        }
+                        input.push(c);
+                    }
+                    KeyEvent {
+                        code: KeyCode::Esc,
+                        ..
+                    } => {
+                        output.status_message.set_message(String::new());
+                        input.clear();
+                        break;
+                    }
+                    KeyEvent {
+                        code: KeyCode::Delete | KeyCode::Backspace,
+                        modifiers: KeyModifiers::NONE,
+                    } => {
+                        input.pop();
+                    }
+                    KeyEvent {
+                        code: KeyCode::Enter,
+                        modifiers: KeyModifiers::NONE,
+                    } => break,
+                    _ => {}
+                }
+            }
+        }
+
+        if input.is_empty() {None} else {Some(input)}
+    }};
+
 }
