@@ -2,6 +2,7 @@ use std::{
     cmp, env, fs,
     io::{stdout, Write},
     path::{Path, PathBuf},
+    time::{Duration, Instant},
 };
 
 use crossterm::{
@@ -33,6 +34,37 @@ impl Row {
 
     fn len(&self) -> usize {
         self.row_content.len()
+    }
+}
+
+struct StatusMessage {
+    message: Option<String>,
+    set_time: Option<Instant>,
+}
+
+impl StatusMessage {
+    fn new(message: String) -> Self {
+        Self {
+            message: Some(message),
+            set_time: Some(Instant::now()),
+        }
+    }
+
+    fn set_message(&mut self, message: String) {
+        self.message = Some(message);
+        self.set_time = Some(Instant::now());
+    }
+
+    fn message(&mut self) -> Option<&String> {
+        self.set_time.and_then(|time| {
+            if time.elapsed() > Duration::from_secs(5) {
+                self.message = None;
+                self.set_time = None;
+                None
+            } else {
+                self.message.as_ref()
+            }
+        })
     }
 }
 
@@ -157,18 +189,20 @@ pub(crate) struct Output {
     editor_contents: EditorContents, // #TODO 这里可以直接用 Stdout 吗?
     pub cursor_controller: CursorController,
     pub editor_rows: EditorRows,
+    status_message: StatusMessage,
 }
 
 impl Output {
     pub fn new() -> Self {
         let win_size = terminal::size()
-            .map(|(x, y)| (x as usize, y as usize - 1)) // modify
+            .map(|(x, y)| (x as usize, y as usize - 2))
             .unwrap();
         Self {
             win_size,
             editor_contents: EditorContents::new(),
             cursor_controller: CursorController::new(win_size),
             editor_rows: EditorRows::new(),
+            status_message: StatusMessage::new("Press Ctrl + Q to quit".into()),
         }
     }
 
@@ -254,6 +288,19 @@ impl Output {
         /* end */
         self.editor_contents
             .push_str(&style::Attribute::Reset.to_string());
+        self.editor_contents.push_str("\r\n");
+    }
+
+    fn draw_message_bar(&mut self) {
+        queue!(
+            self.editor_contents,
+            terminal::Clear(ClearType::UntilNewLine)
+        )
+        .unwrap();
+        if let Some(message) = self.status_message.message() {
+            let len = cmp::min(message.len(), self.win_size.0);
+            self.editor_contents.push_str(&message[..len]);
+        }
     }
 
     /// refresh screen
@@ -266,6 +313,7 @@ impl Output {
         queue!(self.editor_contents, cursor::Hide, cursor::MoveTo(0, 0))?;
         self.draw_rows();
         self.draw_status_bar(); // add line
+        self.draw_message_bar();
         let cursor_x = self.cursor_controller.render_x - self.cursor_controller.column_offset; // modify
         let cursor_y = self.cursor_controller.cursor_y - self.cursor_controller.row_offset;
         queue!(
