@@ -7,9 +7,12 @@ use self::{output::Output, reader::Reader};
 pub mod output;
 pub mod reader;
 
+static QUIT_TIMES: u8 = 3;
+
 pub(crate) struct Editor {
     reader: Reader,
     output: Output,
+    quit_times: u8,
 }
 
 impl Editor {
@@ -17,6 +20,7 @@ impl Editor {
         Self {
             reader: Reader,
             output: Output::new(),
+            quit_times: QUIT_TIMES,
         }
     }
 
@@ -28,7 +32,19 @@ impl Editor {
                 KeyEvent {
                     code: KeyCode::Char('q'),
                     modifiers: KeyModifiers::CONTROL,
-                } => return Ok(false),
+                } => {
+                    /* add following */
+                    if self.output.dirty > 0 && self.quit_times > 0 {
+                        self.output.status_message.set_message(format!(
+                        "WARNING!!! File has unsaved changes. Press Ctrl-Q {} more times to quit.",
+                        self.quit_times
+                    ));
+                        self.quit_times -= 1;
+                        return Ok(true);
+                    }
+                    /* end */
+                    return Ok(false);
+                }
                 KeyEvent {
                     code:
                         arrow_key
@@ -40,10 +56,7 @@ impl Editor {
                         | KeyCode::Home
                         | KeyCode::End),
                     modifiers: KeyModifiers::NONE,
-                } => {
-                    self.output.move_cursor(arrow_key);
-                    return Ok(true);
-                }
+                } => self.output.move_cursor(arrow_key),
                 KeyEvent {
                     code: val @ (KeyCode::PageUp | KeyCode::PageDown),
                     modifiers: KeyModifiers::NONE,
@@ -66,12 +79,19 @@ impl Editor {
                             KeyCode::Down
                         })
                     });
-
-                    return Ok(true);
                 }
                 KeyEvent {
+                    code: KeyCode::Char('s'),
+                    modifiers: KeyModifiers::CONTROL,
+                } => self.output.editor_rows.save().map(|size| {
+                    self.output
+                        .status_message
+                        .set_message(format!("{} bytes written", size));
+                    self.output.dirty = 0;
+                })?,
+                KeyEvent {
                     code: code @ (KeyCode::Char(..) | KeyCode::Tab),
-                    modifiers: KeyModifiers::NONE,
+                    modifiers: KeyModifiers::NONE | KeyModifiers::SHIFT,
                 } => {
                     self.output.insert_char(match code {
                         KeyCode::Char(c) => c,
@@ -82,7 +102,7 @@ impl Editor {
                 _ => return Ok(true),
             };
         }
-
+        self.quit_times = QUIT_TIMES;
         Ok(true)
     }
 
