@@ -41,6 +41,11 @@ impl Row {
         self.row_content.insert(at, ch);
         EditorRows::render_row(self)
     }
+
+    fn delete_char(&mut self, at: usize) {
+        self.row_content.remove(at);
+        EditorRows::render_row(self)
+    }
 }
 
 pub struct StatusMessage {
@@ -188,7 +193,6 @@ impl EditorRows {
     fn get_editor_row(&self, at: usize) -> &Row {
         &self.row_contents[at] /* modify */
     }
-
     fn insert_row(&mut self) {
         self.row_contents.push(Row::default());
     }
@@ -213,6 +217,13 @@ impl EditorRows {
                 Ok(contents.as_bytes().len())
             }
         }
+    }
+
+    fn join_adjacent_rows(&mut self, at: usize) {
+        let current_row = self.row_contents.remove(at);
+        let previous_row = self.get_editor_row_mut(at - 1);
+        previous_row.row_content.push_str(&current_row.row_content);
+        Self::render_row(previous_row);
     }
 }
 
@@ -353,6 +364,29 @@ impl Output {
             .get_editor_row_mut(self.cursor_controller.cursor_y)
             .insert_char(self.cursor_controller.cursor_x, ch);
         self.cursor_controller.cursor_x += 1;
+        self.dirty += 1;
+    }
+
+    /// 删除光标前一个字符
+    pub fn delete_char(&mut self) {
+        if self.cursor_controller.cursor_y == self.editor_rows.number_of_rows() {
+            return;
+        }
+        let row = self
+            .editor_rows
+            .get_editor_row_mut(self.cursor_controller.cursor_y);
+        if self.cursor_controller.cursor_x > 0 {
+            row.delete_char(self.cursor_controller.cursor_x - 1);
+            self.cursor_controller.cursor_x -= 1;
+        } else {
+            let previous_row_content = self
+                .editor_rows
+                .get_editor_row(self.cursor_controller.cursor_y - 1);
+            self.cursor_controller.cursor_x = previous_row_content.len();
+            self.editor_rows
+                .join_adjacent_rows(self.cursor_controller.cursor_y);
+            self.cursor_controller.cursor_y -= 1;
+        }
         self.dirty += 1;
     }
 

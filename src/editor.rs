@@ -90,6 +90,15 @@ impl Editor {
                     self.output.dirty = 0;
                 })?,
                 KeyEvent {
+                    code: key @ (KeyCode::Backspace | KeyCode::Delete),
+                    modifiers: KeyModifiers::NONE,
+                } => {
+                    if matches!(key, KeyCode::Delete) {
+                        self.output.move_cursor(KeyCode::Right)
+                    }
+                    self.output.delete_char()
+                }
+                KeyEvent {
                     code: code @ (KeyCode::Char(..) | KeyCode::Tab),
                     modifiers: KeyModifiers::NONE | KeyModifiers::SHIFT,
                 } => {
