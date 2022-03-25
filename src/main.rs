@@ -16,7 +16,6 @@ fn main() -> crossterm::Result<()> {
     let _cleaner = Cleaner;
     terminal::enable_raw_mode()?; // enable raw mode
 
-    let a: Box<str> = "".into();
     let mut editor = editor::Editor::new();
     while editor.run()? {}
 

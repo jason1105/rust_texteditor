@@ -1,3 +1,5 @@
+use std::cmp;
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use self::{output::Output, reader::Reader};
@@ -39,20 +41,30 @@ impl Editor {
                         | KeyCode::End),
                     modifiers: KeyModifiers::NONE,
                 } => {
-                    self.output.move_cursor_arrow(arrow_key);
+                    self.output.move_cursor(arrow_key);
                     return Ok(true);
                 }
                 KeyEvent {
-                    code: key @ (KeyCode::PageUp | KeyCode::PageDown),
+                    code: val @ (KeyCode::PageUp | KeyCode::PageDown),
                     modifiers: KeyModifiers::NONE,
                 } => {
+                    /* add the following */
+                    if matches!(val, KeyCode::PageUp) {
+                        self.output.cursor_controller.cursor_y =
+                            self.output.cursor_controller.row_offset
+                    } else {
+                        self.output.cursor_controller.cursor_y = cmp::min(
+                            self.output.win_size.1 + self.output.cursor_controller.row_offset - 1,
+                            self.output.editor_rows.number_of_rows(),
+                        );
+                    }
+                    /* end */
                     (0..self.output.win_size.1).for_each(|_| {
-                        self.output
-                            .move_cursor_arrow(if matches!(key, KeyCode::PageUp) {
-                                KeyCode::Up
-                            } else {
-                                KeyCode::Down
-                            })
+                        self.output.move_cursor(if matches!(val, KeyCode::PageUp) {
+                            KeyCode::Up
+                        } else {
+                            KeyCode::Down
+                        })
                     });
 
                     return Ok(true);
