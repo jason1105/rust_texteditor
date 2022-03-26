@@ -106,6 +106,12 @@ impl Editor {
                     })?
                 }
                 KeyEvent {
+                    code: KeyCode::Char('f'),
+                    modifiers: KeyModifiers::CONTROL,
+                } => {
+                    self.output.find();
+                }
+                KeyEvent {
                     code: key @ (KeyCode::Backspace | KeyCode::Delete),
                     modifiers: KeyModifiers::NONE,
                 } => {
@@ -143,48 +149,56 @@ impl Editor {
 
 #[macro_export]
 macro_rules! prompt {
-    ($output:expr,$($args:tt)*) => {{
-        use self::{output::Output, reader::Reader};
+    ($output:expr,$args:tt) => {
+        prompt!($output, $args, callback = |&_, _, _| {})
+    };
+    ($output:expr,$args:tt, callback = $callback:expr) => {{
+        use crate::editor::{output::Output, reader::Reader};
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
         let output: &mut Output = $output;
         let mut input = String::with_capacity(32);
         loop {
-            output.status_message.set_message(format!($($args)*, input));
-            output.refresh_screen()?;
-            if let Ok(key_event) = Reader.read_key() {
-                match key_event {
-                    KeyEvent {
-                        code: KeyCode::Char(c),
-                        modifiers: KeyModifiers::NONE | KeyModifiers::SHIFT,
-                    } => {
-                        if c == '\x1b' {
-                            break;
-                        }
-                        input.push(c);
-                    }
-                    KeyEvent {
-                        code: KeyCode::Esc,
-                        ..
-                    } => {
-                        output.status_message.set_message(String::new());
-                        input.clear();
+            output.status_message.set_message(format!($args, input));
+            output.refresh_screen().unwrap();
+            let key_event = Reader.read_key()?;
+            match key_event {
+                KeyEvent {
+                    code: KeyCode::Char(c),
+                    modifiers: KeyModifiers::NONE | KeyModifiers::SHIFT,
+                } => {
+                    if c == '\x1b' {
                         break;
                     }
-                    KeyEvent {
-                        code: KeyCode::Delete | KeyCode::Backspace,
-                        modifiers: KeyModifiers::NONE,
-                    } => {
-                        input.pop();
-                    }
-                    KeyEvent {
-                        code: KeyCode::Enter,
-                        modifiers: KeyModifiers::NONE,
-                    } => break,
-                    _ => {}
+                    input.push(c);
                 }
+                KeyEvent {
+                    code: KeyCode::Esc, ..
+                } => {
+                    output.status_message.set_message(String::new());
+                    input.clear();
+                    break;
+                }
+                KeyEvent {
+                    code: KeyCode::Delete | KeyCode::Backspace,
+                    modifiers: KeyModifiers::NONE,
+                } => {
+                    input.pop();
+                }
+                KeyEvent {
+                    code: KeyCode::Enter,
+                    modifiers: KeyModifiers::NONE,
+                } => break,
+                _ => {}
             }
+
+            $callback(output, &input, key_event.code);
         }
 
-        if input.is_empty() {None} else {Some(input)}
+        if input.is_empty() {
+            None
+        } else {
+            Some(input)
+        }
     }};
-
 }

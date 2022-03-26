@@ -12,6 +12,8 @@ use crossterm::{
     terminal::{self, ClearType},
 };
 
+use crate::prompt;
+
 use self::cursor_controller::CursorController;
 
 pub mod cursor_controller;
@@ -45,6 +47,24 @@ impl Row {
     fn delete_char(&mut self, at: usize) {
         self.row_content.remove(at);
         EditorRows::render_row(self)
+    }
+
+    /// args
+    ///     usize: x position of cursor which is a offset in rendered row.
+    /// Returns
+    ///     usize: x position of cursor in row_content of not being rendered
+    fn get_row_content_x(&self, render_x: usize) -> usize {
+        let mut current_render_x = 0;
+        for (cursor_x, ch) in self.row_content.chars().enumerate() {
+            if ch == '\t' {
+                current_render_x += (TAB_STOP - 1) - (current_render_x % TAB_STOP);
+            }
+            current_render_x += 1;
+            if current_render_x > render_x {
+                return cursor_x;
+            }
+        }
+        0
     }
 }
 
@@ -255,7 +275,9 @@ impl Output {
             editor_contents: EditorContents::new(),
             cursor_controller: CursorController::new(win_size),
             editor_rows: EditorRows::new(),
-            status_message: StatusMessage::new("HELP: Ctrl-S = Save | Ctrl-Q = Quit ".into()),
+            status_message: StatusMessage::new(
+                "HELP: Ctrl-S = Save | Ctrl-Q = Quit | Ctrl-F = Find ".into(),
+            ),
             dirty: 0,
         }
     }
@@ -413,6 +435,32 @@ impl Output {
             self.cursor_controller.cursor_y -= 1;
         }
         self.dirty += 1;
+    }
+
+    fn find_callback(output: &mut Output, keyword: &str, key_code: KeyCode) {
+        match key_code {
+            KeyCode::Esc | KeyCode::Enter => {}
+            _ => {
+                for i in 0..output.editor_rows.number_of_rows() {
+                    let row = output.editor_rows.get_editor_row(i);
+                    if let Some(index) = row.render.find(&keyword) {
+                        output.cursor_controller.cursor_y = i;
+                        output.cursor_controller.cursor_x = row.get_row_content_x(index);
+                        output.cursor_controller.row_offset = output.editor_rows.number_of_rows();
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn find(&mut self) -> io::Result<()> {
+        prompt!(
+            self,
+            "Search: {} (ESC to cancel)",
+            callback = Output::find_callback
+        );
+        Ok(())
     }
 
     /// refresh screen
