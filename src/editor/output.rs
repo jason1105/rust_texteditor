@@ -12,6 +12,9 @@ use crossterm::{
     terminal::{self, ClearType},
 };
 
+use itertools::Itertools;
+use itertools::*;
+
 use crate::prompt;
 
 use self::cursor_controller::CursorController;
@@ -250,6 +253,13 @@ impl EditorRows {
     }
 }
 
+enum Direction {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
 /// This is a consumer.
 /// Should be used to write to stdout.
 /// 1. Implement Write trait
@@ -441,7 +451,61 @@ impl Output {
         match key_code {
             KeyCode::Esc | KeyCode::Enter => {}
             _ => {
-                for i in 0..output.editor_rows.number_of_rows() {
+                // 默认查找范围是所有行
+                let mut line_rng =
+                    Either::Left((0..output.editor_rows.number_of_rows() - 1).into_iter());
+
+                let cursor_x = output.cursor_controller.cursor_x;
+                let cursor_y = output.cursor_controller.cursor_y;
+
+                match key_code {
+                    // 按下左右键, 在行内查找
+                    x_dir @ (KeyCode::Left | KeyCode::Right) => {
+                        let mut column_rng: (usize, usize) = (0, 0); // (start, end)
+                        let row = output
+                            .editor_rows
+                            .get_editor_row(output.cursor_controller.cursor_y);
+                        // 确定查找范围: 向左和向右
+                        if let KeyCode::Left = x_dir {
+                            if let Some(index) = row.render[..cursor_x].rfind(&keyword) {
+                                output.cursor_controller.cursor_x = row.get_row_content_x(index);
+                            }
+                        } else {
+                            let start = (cursor_x + 1).min(row.render.len());
+                            if let Some(index) = row.render[start..].find(&keyword) {
+                                output.cursor_controller.cursor_x =
+                                    row.get_row_content_x(index + start);
+                            }
+                        };
+
+                        // 行内查找结束后, 返回
+                        return;
+                    }
+                    // 按下上下键, 在行间查找
+                    y_dir @ (KeyCode::Up | KeyCode::Down) => {
+                        // search line by line: (start_line, end_line)
+
+                        let (mut start_line, mut end_line) = (cursor_y, cursor_y);
+
+                        if KeyCode::Up == y_dir {
+                            start_line = 0;
+                            end_line = end_line.saturating_sub(1);
+                        } else {
+                            start_line =
+                                (start_line + 1).min(output.editor_rows.number_of_rows() - 1);
+                            end_line = output.editor_rows.number_of_rows() - 1;
+                        }
+
+                        line_rng = Either::Left((start_line..end_line).into_iter());
+                        if start_line > end_line {
+                            line_rng = Either::Right((end_line..start_line).rev());
+                        }
+                    }
+                    _ => {}
+                };
+
+                //
+                for i in line_rng {
                     let row = output.editor_rows.get_editor_row(i);
                     if let Some(index) = row.render.find(&keyword) {
                         output.cursor_controller.cursor_y = i;
@@ -455,11 +519,13 @@ impl Output {
     }
 
     pub fn find(&mut self) -> io::Result<()> {
+        let cursor_controller = self.cursor_controller;
         prompt!(
             self,
-            "Search: {} (ESC to cancel)",
+            "Search: {} (Use ESC / Arrows / Enter)",
             callback = Output::find_callback
         );
+        self.cursor_controller = cursor_controller;
         Ok(())
     }
 

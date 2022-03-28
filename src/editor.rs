@@ -173,7 +173,8 @@ macro_rules! prompt {
                     input.push(c);
                 }
                 KeyEvent {
-                    code: KeyCode::Esc, ..
+                    code: KeyCode::Esc,
+                     .. // omit
                 } => {
                     output.status_message.set_message(String::new());
                     input.clear();

@@ -6,6 +6,7 @@ use super::{EditorRows, Row};
 
 static TAB_STOP: usize = 8;
 
+#[derive(Copy, Clone)] // 我们想保存状态，所以需要 Copy 和 Clone
 pub(crate) struct CursorController {
     pub cursor_x: usize, // column
     pub cursor_y: usize, // row, max value is equal to number of rows of file.
