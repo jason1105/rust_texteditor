@@ -1,19 +1,18 @@
-use std::{
-    cmp, env, fs,
-    io::{self, stdout, ErrorKind, Write},
-    path::{Path, PathBuf},
-    time::{Duration, Instant},
-};
-
+use crossterm::style::*;
 use crossterm::{
     cursor,
     event::KeyCode,
     execute, queue, style,
     terminal::{self, ClearType},
 };
-
 use itertools::Itertools;
 use itertools::*;
+use std::{
+    cmp, env, fs,
+    io::{self, stdout, ErrorKind, Write},
+    path::{Path, PathBuf},
+    time::{Duration, Instant},
+};
 
 use crate::prompt;
 
@@ -24,10 +23,35 @@ pub mod cursor_controller;
 static VERSION: &str = "0.1.0";
 static TAB_STOP: usize = 8;
 
+/// This is a role who is responsible for highlight.
+trait SyntaxHighlight {
+    // Update the syntax highlighting for the chars in current line.
+    fn update_syntax(&self, at: usize, editor_rows: &mut Vec<Row>);
+    // Convert type to color
+    fn syntax_color(&self, highlight_type: &HighlightType) -> Color; // add method
+
+    // Write to editor.output.buffer
+    fn color_row(&self, render: &str, highlight: &[HighlightType], out: &mut EditorContents) {
+        render.chars().enumerate().for_each(|(i, c)| {
+            let _ = queue!(out, SetForegroundColor(self.syntax_color(&highlight[i])));
+            out.push(c);
+            let _ = queue!(out, ResetColor);
+        });
+    }
+}
+
+/// Describe what type each char should be given in specific syntax rules.
+#[derive(Clone, Copy)]
+enum HighlightType {
+    Normal,
+    Number,
+}
+
 #[derive(Default)]
 struct Row {
     row_content: String,
     render: String,
+    highlight: Vec<HighlightType>, // Save the type of each char in render of this row. So that we can render it in different color.
 }
 
 impl Row {
@@ -35,6 +59,7 @@ impl Row {
         Self {
             row_content,
             render,
+            highlight: Vec::new(),
         }
     }
 
@@ -154,28 +179,33 @@ pub struct EditorRows {
 }
 
 impl EditorRows {
-    fn new() -> Self {
+    fn new(syntax_highlight: Option<&dyn SyntaxHighlight>) -> Self {
         match env::args().nth(1) {
             None => Self {
                 row_contents: Vec::new(),
                 filename: None,
             },
-            Some(file) => Self::from_file(file.into()),
+            Some(file) => Self::from_file(file.into(), syntax_highlight),
         }
     }
 
-    fn from_file(file: PathBuf) -> Self {
+    fn from_file(file: PathBuf, syntax_highlight: Option<&dyn SyntaxHighlight>) -> Self {
         let file_contents = fs::read_to_string(&file).expect("Unable to read file");
+
+        let mut content: Vec<Row> = Vec::new();
+
+        file_contents.lines().enumerate().for_each(|(index, line)| {
+            let mut row = Row::new(line.to_string(), String::new());
+            Self::render_row(&mut row);
+            content.push(row);
+            if let Some(s) = syntax_highlight {
+                s.update_syntax(index, &mut content);
+            }
+        });
+
         /* modify */
         Self {
-            row_contents: file_contents
-                .lines()
-                .map(|it| {
-                    let mut row = Row::new(it.into(), String::new());
-                    Self::render_row(&mut row);
-                    row
-                })
-                .collect(),
+            row_contents: content,
             filename: Some(file),
         }
         /* end */
@@ -260,6 +290,11 @@ enum Direction {
     Right,
 }
 
+use crate::syntax_struct;
+syntax_struct! {
+    struct RustHighlight;
+}
+
 /// This is a consumer.
 /// Should be used to write to stdout.
 /// 1. Implement Write trait
@@ -273,6 +308,7 @@ pub(crate) struct Output {
     pub editor_rows: EditorRows,
     pub status_message: StatusMessage,
     pub dirty: u64,
+    syntax_highlight: Option<Box<dyn SyntaxHighlight>>,
 }
 
 impl Output {
@@ -280,15 +316,17 @@ impl Output {
         let win_size = terminal::size()
             .map(|(x, y)| (x as usize, y as usize - 2))
             .unwrap();
+        let syntax_highlight: Option<Box<dyn SyntaxHighlight>> = Some(Box::new(RustHighlight));
         Self {
             win_size,
             editor_contents: EditorContents::new(),
             cursor_controller: CursorController::new(win_size),
-            editor_rows: EditorRows::new(),
+            editor_rows: EditorRows::new(syntax_highlight.as_deref()),
             status_message: StatusMessage::new(
                 "HELP: Ctrl-S = Save | Ctrl-Q = Quit | Ctrl-F = Find ".into(),
             ),
             dirty: 0,
+            syntax_highlight,
         }
     }
 
@@ -325,11 +363,39 @@ impl Output {
                     self.editor_contents.push('~');
                 }
             } else {
-                let row = self.editor_rows.get_render(file_row); // modify
+                let row = self.editor_rows.get_editor_row(file_row);
+                let render = &row.render;
                 let column_offset = self.cursor_controller.column_offset;
                 let len = cmp::min(row.len().saturating_sub(column_offset), screen_columns);
                 let start = if len == 0 { 0 } else { column_offset };
-                self.editor_contents.push_str(&row[start..start + len])
+                // self.editor_contents.push_str(&row[start..start + len]);
+                // let _ = &row[start..start + len]
+                //     .chars()
+                //     .zip((start..start + len).into_iter())
+                //     .for_each(|(c, _index)| {
+                //         if c.is_ascii_digit() {
+                //             queue!(self.editor_contents, SetForegroundColor(Color::Red)).unwrap();
+                //             self.editor_contents.push(c);
+                //             queue!(self.editor_contents, ResetColor).unwrap();
+                //         } else {
+                //             self.editor_contents.push(c);
+                //         }
+                //     });
+
+                /*
+                - Method of 'as_ref" is used to avoid borrow checker error.
+                - Combine methods of 'map' and 'unwrap_or_else' to realize 'if else' functionality.
+                */
+                self.syntax_highlight
+                    .as_ref()
+                    .map(|syntax_highlight| {
+                        syntax_highlight.color_row(
+                            &render[start..start + len],
+                            &row.highlight[start..start + len],
+                            &mut self.editor_contents,
+                        )
+                    })
+                    .unwrap_or_else(|| self.editor_contents.push_str(&render[start..start + len]));
             }
             queue!(
                 self.editor_contents,
@@ -399,15 +465,27 @@ impl Output {
         self.editor_rows
             .get_editor_row_mut(self.cursor_controller.cursor_y)
             .insert_char(self.cursor_controller.cursor_x, ch);
+
+        // Update syntax highlighting
+        if let Some(it) = self.syntax_highlight.as_ref() {
+            it.update_syntax(
+                self.cursor_controller.cursor_y,
+                &mut self.editor_rows.row_contents,
+            )
+        }
+
         self.cursor_controller.cursor_x += 1;
         self.dirty += 1;
     }
 
     pub fn insert_newline(&mut self) {
+        /* Insert blank line. */
         if self.cursor_controller.cursor_x == 0 {
             self.editor_rows
                 .insert_row(self.cursor_controller.cursor_y, String::new())
-        } else {
+        }
+        /* Split line */
+        else {
             let current_row = self
                 .editor_rows
                 .get_editor_row_mut(self.cursor_controller.cursor_y);
@@ -418,6 +496,18 @@ impl Output {
             EditorRows::render_row(current_row);
             self.editor_rows
                 .insert_row(self.cursor_controller.cursor_y + 1, new_row_content);
+
+            // Update highlight for the new row.
+            if let Some(it) = self.syntax_highlight.as_ref() {
+                it.update_syntax(
+                    self.cursor_controller.cursor_y,
+                    &mut self.editor_rows.row_contents,
+                );
+                it.update_syntax(
+                    self.cursor_controller.cursor_y + 1,
+                    &mut self.editor_rows.row_contents,
+                )
+            }
         }
         self.cursor_controller.cursor_x = 0;
         self.cursor_controller.cursor_y += 1;
@@ -443,6 +533,12 @@ impl Output {
             self.editor_rows
                 .join_adjacent_rows(self.cursor_controller.cursor_y);
             self.cursor_controller.cursor_y -= 1;
+        }
+        if let Some(it) = self.syntax_highlight.as_ref() {
+            it.update_syntax(
+                self.cursor_controller.cursor_y,
+                &mut self.editor_rows.row_contents,
+            );
         }
         self.dirty += 1;
     }
@@ -549,4 +645,42 @@ impl Output {
         )?;
         self.editor_contents.flush()
     }
+}
+
+#[macro_export]
+macro_rules! syntax_struct {
+    (
+        struct $Name:ident;
+    ) => {
+        struct $Name;
+
+        impl SyntaxHighlight for $Name {
+            fn syntax_color(&self, highlight_type: &HighlightType) -> Color {
+                match highlight_type {
+                    HighlightType::Normal => Color::Reset,
+                    HighlightType::Number => Color::Cyan,
+                }
+            }
+
+            fn update_syntax(&self, at: usize, editor_rows: &mut Vec<Row>) {
+                let current_row = &mut editor_rows[at];
+                macro_rules! add {
+                    ($h:expr) => {
+                        current_row.highlight.push($h)
+                    };
+                }
+
+                current_row.highlight = Vec::with_capacity(current_row.render.len());
+                let chars = current_row.render.chars();
+                for c in chars {
+                    if c.is_digit(10) {
+                        add!(HighlightType::Number);
+                    } else {
+                        add!(HighlightType::Normal)
+                    }
+                }
+                assert_eq!(current_row.render.len(), current_row.highlight.len())
+            }
+        }
+    };
 }
