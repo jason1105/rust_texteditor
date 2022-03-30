@@ -45,6 +45,7 @@ trait SyntaxHighlight {
 enum HighlightType {
     Normal,
     Number,
+    SearchMatch,
 }
 
 #[derive(Default)]
@@ -309,6 +310,7 @@ pub(crate) struct Output {
     pub status_message: StatusMessage,
     pub dirty: u64,
     syntax_highlight: Option<Box<dyn SyntaxHighlight>>,
+    previous_highlight: Option<(usize, Vec<HighlightType>)>,
 }
 
 impl Output {
@@ -327,6 +329,7 @@ impl Output {
             ),
             dirty: 0,
             syntax_highlight,
+            previous_highlight: None,
         }
     }
 
@@ -544,6 +547,11 @@ impl Output {
     }
 
     fn find_callback(output: &mut Output, keyword: &str, key_code: KeyCode) {
+        // Restore highlight.
+        if let Some((row_index, highlight)) = output.previous_highlight.take() {
+            output.editor_rows.get_editor_row_mut(row_index).highlight = highlight;
+        }
+        // Search for keyword.
         match key_code {
             KeyCode::Esc | KeyCode::Enter => {}
             _ => {
@@ -554,21 +562,35 @@ impl Output {
                 let cursor_x = output.cursor_controller.cursor_x;
                 let cursor_y = output.cursor_controller.cursor_y;
 
+                /*
+                Logic: (Now solution, but not good enough)
+                    1. If press Left or Right, search in line of cursor_y.
+                    2. If press Up or Down, make range in terms of direction, then search the range.
+                Optimization:
+                    1. If press Up or Down, find out the line which will be searched, or from first line of file.
+                    2. If press Left or Right, make x position in terms of direction, or from head of line.
+                    3. Search begin from the x in line.
+                */
                 match key_code {
                     // 按下左右键, 在行内查找
                     x_dir @ (KeyCode::Left | KeyCode::Right) => {
-                        let mut column_rng: (usize, usize) = (0, 0); // (start, end)
-                        let row = output
-                            .editor_rows
-                            .get_editor_row(output.cursor_controller.cursor_y);
+                        let row = output.editor_rows.get_editor_row_mut(cursor_y);
                         // 确定查找范围: 向左和向右
                         if let KeyCode::Left = x_dir {
                             if let Some(index) = row.render[..cursor_x].rfind(&keyword) {
+                                output.previous_highlight = Some((cursor_y, row.highlight.clone())); // backup
+                                (index..index + keyword.len()).for_each(|i| {
+                                    row.highlight[i] = HighlightType::SearchMatch;
+                                });
                                 output.cursor_controller.cursor_x = row.get_row_content_x(index);
                             }
                         } else {
                             let start = (cursor_x + 1).min(row.render.len());
                             if let Some(index) = row.render[start..].find(&keyword) {
+                                output.previous_highlight = Some((cursor_y, row.highlight.clone())); // backup
+                                (start + index..start + index + keyword.len()).for_each(|i| {
+                                    row.highlight[i] = HighlightType::SearchMatch;
+                                });
                                 output.cursor_controller.cursor_x =
                                     row.get_row_content_x(index + start);
                             }
@@ -602,8 +624,14 @@ impl Output {
 
                 //
                 for i in line_rng {
-                    let row = output.editor_rows.get_editor_row(i);
+                    let row = output.editor_rows.get_editor_row_mut(i);
+
                     if let Some(index) = row.render.find(&keyword) {
+                        output.previous_highlight = Some((i, row.highlight.clone())); // backup
+                        (index..index + keyword.len()).for_each(|at| {
+                            row.highlight[at] = HighlightType::SearchMatch;
+                        });
+
                         output.cursor_controller.cursor_y = i;
                         output.cursor_controller.cursor_x = row.get_row_content_x(index);
                         output.cursor_controller.row_offset = output.editor_rows.number_of_rows();
@@ -659,6 +687,7 @@ macro_rules! syntax_struct {
                 match highlight_type {
                     HighlightType::Normal => Color::Reset,
                     HighlightType::Number => Color::Cyan,
+                    HighlightType::SearchMatch => Color::Blue,
                 }
             }
 
