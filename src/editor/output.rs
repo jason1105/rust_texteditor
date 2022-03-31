@@ -73,8 +73,12 @@ impl Row {
         }
     }
 
-    fn len(&self) -> usize {
+    fn origin_len(&self) -> usize {
         self.row_content.len()
+    }
+
+    fn render_len(&self) -> usize {
+        self.render.len()
     }
 
     fn insert_char(&mut self, at: usize, ch: char) {
@@ -378,7 +382,10 @@ impl Output {
                 let row = self.editor_rows.get_editor_row(file_row);
                 let render = &row.render;
                 let column_offset = self.cursor_controller.column_offset;
-                let len = cmp::min(row.len().saturating_sub(column_offset), screen_columns);
+                let len = cmp::min(
+                    row.render_len().saturating_sub(column_offset),
+                    screen_columns,
+                );
                 let start = if len == 0 { 0 } else { column_offset };
                 // self.editor_contents.push_str(&row[start..start + len]);
                 // let _ = &row[start..start + len]
@@ -541,7 +548,7 @@ impl Output {
             let previous_row_content = self
                 .editor_rows
                 .get_editor_row(self.cursor_controller.cursor_y - 1);
-            self.cursor_controller.cursor_x = previous_row_content.len();
+            self.cursor_controller.cursor_x = previous_row_content.origin_len();
             self.editor_rows
                 .join_adjacent_rows(self.cursor_controller.cursor_y);
             self.cursor_controller.cursor_y -= 1;

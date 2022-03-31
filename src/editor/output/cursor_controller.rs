@@ -55,10 +55,10 @@ impl CursorController {
                 } else {
                     if self.cursor_y != 0 {
                         self.cursor_y -= 1;
-                        self.cursor_x = editor_rows.get_editor_row(self.cursor_y).len();
+                        self.cursor_x = editor_rows.get_editor_row(self.cursor_y).origin_len();
                         self.column_offset = editor_rows
                             .get_editor_row(self.cursor_y)
-                            .len()
+                            .origin_len()
                             .saturating_sub(self.screen_columns);
                     }
                 }
@@ -67,7 +67,7 @@ impl CursorController {
                 // 如果光标没有超出文件的最大行数
                 if self.cursor_y < number_of_rows {
                     // 如果光标没有超出该行的最大列数, 则光标右移
-                    if self.cursor_x < editor_rows.get_editor_row(self.cursor_y).len() {
+                    if self.cursor_x < editor_rows.get_editor_row(self.cursor_y).origin_len() {
                         self.cursor_x += 1;
                     }
                     // 如果光标超出该行的最大列数
@@ -95,7 +95,7 @@ impl CursorController {
 
         // start 考虑光标x坐标是不是落在了空白处
         let row_len = if self.cursor_y < number_of_rows {
-            editor_rows.get_editor_row(self.cursor_y).len()
+            editor_rows.get_editor_row(self.cursor_y).origin_len()
         } else {
             0
         };
