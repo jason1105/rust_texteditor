@@ -32,11 +32,20 @@ trait SyntaxHighlight {
 
     // Write to editor.output.buffer
     fn color_row(&self, render: &str, highlight: &[HighlightType], out: &mut EditorContents) {
+        let mut current_color = self.syntax_color(&HighlightType::Normal);
+
         render.chars().enumerate().for_each(|(i, c)| {
-            let _ = queue!(out, SetForegroundColor(self.syntax_color(&highlight[i])));
+            let color = self.syntax_color(&highlight[i]);
+
+            if current_color != color {
+                let _ = queue!(out, SetForegroundColor(color));
+            }
+
             out.push(c);
-            let _ = queue!(out, ResetColor);
+            current_color = color;
         });
+
+        let _ = queue!(out, ResetColor);
     }
 }
 
