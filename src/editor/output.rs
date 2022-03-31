@@ -565,8 +565,7 @@ impl Output {
             KeyCode::Esc | KeyCode::Enter => {}
             _ => {
                 // 默认查找范围是所有行
-                let mut line_rng =
-                    Either::Left((0..output.editor_rows.number_of_rows() - 1).into_iter());
+                let mut line_rng = Either::Left(0..output.editor_rows.number_of_rows());
 
                 let cursor_x = output.cursor_controller.cursor_x;
                 let cursor_y = output.cursor_controller.cursor_y;
@@ -612,20 +611,13 @@ impl Output {
                     y_dir @ (KeyCode::Up | KeyCode::Down) => {
                         // search line by line: (start_line, end_line)
 
-                        let (mut start_line, mut end_line) = (cursor_y, cursor_y);
-
                         if KeyCode::Up == y_dir {
-                            start_line = 0;
-                            end_line = end_line.saturating_sub(1);
+                            line_rng = Either::Right((0..cursor_y).rev());
                         } else {
-                            start_line =
-                                (start_line + 1).min(output.editor_rows.number_of_rows() - 1);
-                            end_line = output.editor_rows.number_of_rows() - 1;
-                        }
-
-                        line_rng = Either::Left((start_line..end_line).into_iter());
-                        if start_line > end_line {
-                            line_rng = Either::Right((end_line..start_line).rev());
+                            let start_line =
+                                (cursor_y + 1).min(output.editor_rows.number_of_rows() - 1);
+                            line_rng =
+                                Either::Left(start_line..output.editor_rows.number_of_rows());
                         }
                     }
                     _ => {}
