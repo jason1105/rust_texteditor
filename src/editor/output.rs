@@ -600,7 +600,7 @@ impl Output {
                                 output.cursor_controller.cursor_x = row.get_row_content_x(index);
                             }
                         } else {
-                            let start = (cursor_x + 1).min(row.render.len());
+                            let start = (cursor_x).min(row.render.len());
                             if let Some(index) = row.render[start..].find(&keyword) {
                                 output.previous_highlight = Some((cursor_y, row.highlight.clone())); // backup
                                 (start + index..start + index + keyword.len()).for_each(|i| {
