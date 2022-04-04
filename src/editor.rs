@@ -2,6 +2,8 @@ use std::{cmp, path::PathBuf};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use crate::editor::output::EditorRows;
+
 use self::{output::Output, reader::Reader};
 
 pub mod output;
@@ -86,6 +88,7 @@ impl Editor {
                     code: KeyCode::Char('s'),
                     modifiers: KeyModifiers::CONTROL,
                 } => {
+                    use crate::editor::output::SyntaxHighlight;
                     use crate::prompt;
                     if matches!(self.output.editor_rows.filename, None) {
                         let file_name: Option<PathBuf> =
@@ -96,6 +99,24 @@ impl Editor {
                                 .set_message("Save Aborted".into());
                             return Ok(true);
                         }
+                        use crate::editor::output::Row;
+                        file_name
+                            .as_ref()
+                            .and_then(|path| path.extension())
+                            .and_then(|ext| ext.to_str())
+                            .map(|ext| {
+                                Output::select_syntax(ext).map(|highlight| {
+                                    let highlight = self.output.syntax_highlight.insert(highlight);
+
+                                    for i in 0..self.output.editor_rows.number_of_rows() {
+                                        highlight.update_syntax(
+                                            i,
+                                            &mut self.output.editor_rows.row_contents,
+                                        );
+                                    }
+                                })
+                            });
+
                         self.output.editor_rows.filename = file_name;
                     }
                     self.output.editor_rows.save().map(|size| {

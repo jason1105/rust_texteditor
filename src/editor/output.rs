@@ -23,49 +23,23 @@ pub mod cursor_controller;
 static VERSION: &str = "0.1.0";
 static TAB_STOP: usize = 8;
 
-/// This is a role who is responsible for highlight.
-trait SyntaxHighlight {
-    // Update the syntax highlighting for the chars in current line.
-    fn update_syntax(&self, at: usize, editor_rows: &mut Vec<Row>);
-    // Convert type to color
-    fn syntax_color(&self, highlight_type: &HighlightType) -> Color; // add method
-
-    // Write to editor.output.buffer
-    fn color_row(&self, render: &str, highlight: &[HighlightType], out: &mut EditorContents) {
-        let mut current_color = self.syntax_color(&HighlightType::Normal);
-
-        render.chars().enumerate().for_each(|(i, c)| {
-            let color = self.syntax_color(&highlight[i]);
-
-            if current_color != color {
-                let _ = queue!(out, SetForegroundColor(color));
-            }
-
-            out.push(c);
-            current_color = color;
-        });
-
-        let _ = queue!(out, ResetColor);
-    }
-}
-
 /// Describe what type each char should be given in specific syntax rules.
 #[derive(Clone, Copy)]
-enum HighlightType {
+pub enum HighlightType {
     Normal,
     Number,
     SearchMatch,
 }
 
 #[derive(Default)]
-struct Row {
+pub struct Row {
     row_content: String,
     render: String,
     highlight: Vec<HighlightType>, // Save the type of each char in render of this row. So that we can render it in different color.
 }
 
 impl Row {
-    fn new(row_content: String, render: String) -> Self {
+    pub fn new(row_content: String, render: String) -> Self {
         Self {
             row_content,
             render,
@@ -142,7 +116,7 @@ impl StatusMessage {
 }
 
 /// Buffer of editor
-struct EditorContents {
+pub struct EditorContents {
     content: String,
 }
 
@@ -188,12 +162,12 @@ impl Write for EditorContents {
 /// 3. Edit file
 /// 4. Render file
 pub struct EditorRows {
-    row_contents: Vec<Row>, // Box<str> and String are same, but Box<str> is more efficient and smaller.
+    pub row_contents: Vec<Row>, // Box<str> and String are same, but Box<str> is more efficient and smaller.
     pub filename: Option<PathBuf>, //add field
 }
 
 impl EditorRows {
-    fn new(syntax_highlight: Option<&dyn SyntaxHighlight>) -> Self {
+    fn new(syntax_highlight: &mut Option<Box<dyn SyntaxHighlight>>) -> Self {
         match env::args().nth(1) {
             None => Self {
                 row_contents: Vec::new(),
@@ -203,8 +177,12 @@ impl EditorRows {
         }
     }
 
-    fn from_file(file: PathBuf, syntax_highlight: Option<&dyn SyntaxHighlight>) -> Self {
+    fn from_file(file: PathBuf, syntax_highlight: &mut Option<Box<dyn SyntaxHighlight>>) -> Self {
         let file_contents = fs::read_to_string(&file).expect("Unable to read file");
+
+        file.extension()
+            .and_then(|ext| ext.to_str()) // 使用 and_then() 而不是 map(), 因为 ext.to_str() 返回的是 Option
+            .map(|ext| Output::select_syntax(ext).map(|syntax| syntax_highlight.insert(syntax)));
 
         let mut content: Vec<Row> = Vec::new();
 
@@ -230,7 +208,7 @@ impl EditorRows {
         &self.row_contents[at].render
     }
 
-    fn render_row(row: &mut Row) {
+    pub fn render_row(row: &mut Row) {
         let mut index = 0;
         let capacity = row
             .row_content
@@ -297,18 +275,6 @@ impl EditorRows {
     }
 }
 
-enum Direction {
-    Up,
-    Down,
-    Left,
-    Right,
-}
-
-use crate::syntax_struct;
-syntax_struct! {
-    struct RustHighlight;
-}
-
 /// This is a consumer.
 /// Should be used to write to stdout.
 /// 1. Implement Write trait
@@ -322,7 +288,7 @@ pub(crate) struct Output {
     pub editor_rows: EditorRows,
     pub status_message: StatusMessage,
     pub dirty: u64,
-    syntax_highlight: Option<Box<dyn SyntaxHighlight>>,
+    pub syntax_highlight: Option<Box<dyn SyntaxHighlight>>,
     previous_highlight: Option<(usize, Vec<HighlightType>)>,
 }
 
@@ -331,12 +297,12 @@ impl Output {
         let win_size = terminal::size()
             .map(|(x, y)| (x as usize, y as usize - 2))
             .unwrap();
-        let syntax_highlight: Option<Box<dyn SyntaxHighlight>> = Some(Box::new(RustHighlight));
+        let mut syntax_highlight: Option<Box<dyn SyntaxHighlight>> = None;
         Self {
             win_size,
             editor_contents: EditorContents::new(),
             cursor_controller: CursorController::new(win_size),
-            editor_rows: EditorRows::new(syntax_highlight.as_deref()),
+            editor_rows: EditorRows::new(&mut syntax_highlight),
             status_message: StatusMessage::new(
                 "HELP: Ctrl-S = Save | Ctrl-Q = Quit | Ctrl-F = Find ".into(),
             ),
@@ -344,6 +310,13 @@ impl Output {
             syntax_highlight,
             previous_highlight: None,
         }
+    }
+
+    pub fn select_syntax(extension: &str) -> Option<Box<dyn SyntaxHighlight>> {
+        let list: Vec<Box<dyn SyntaxHighlight>> = vec![Box::new(RustHighlight::new())];
+        // list.push(other highlight);
+        list.into_iter()
+            .find(|it| it.extensions().contains(&extension))
     }
 
     pub fn clear_screen() -> crossterm::Result<()> {
@@ -683,12 +656,75 @@ impl Output {
     }
 }
 
+fn is_separator(c: char) -> bool {
+    c.is_whitespace()
+        || [
+            ',', '.', '(', ')', '+', '-', '/', '*', '=', '~', '%', '<', '>', '"', '\'', ';',
+        ]
+        .contains(&c)
+}
+
+enum Direction {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+use crate::syntax_struct;
+
+/// 这个宏的作用是将一些数据转换成一个结构体, 虽然传入宏的参数看起来像结构体, 但并不是结构体.
+syntax_struct! {
+    struct RustHighlight {
+        // 可能有多个扩展名
+        extensions: ["rs", "rust"]  // invalid syntax, but it's ok in macro invocation, as we could fix it in macro implementation.
+    }
+}
+
+/// This is a role who is responsible for highlight.
+pub trait SyntaxHighlight {
+    // Update the syntax highlighting for the chars in current line.
+    fn update_syntax(&self, at: usize, editor_rows: &mut Vec<Row>);
+    // Convert type to color
+    fn syntax_color(&self, highlight_type: &HighlightType) -> Color; // add method
+
+    // Write to editor.output.buffer
+    fn color_row(&self, render: &str, highlight: &[HighlightType], out: &mut EditorContents) {
+        let mut current_color = self.syntax_color(&HighlightType::Normal);
+
+        render.chars().enumerate().for_each(|(i, c)| {
+            let color = self.syntax_color(&highlight[i]);
+
+            if current_color != color {
+                let _ = queue!(out, SetForegroundColor(color));
+            }
+
+            out.push(c);
+            current_color = color;
+        });
+
+        let _ = queue!(out, ResetColor);
+    }
+
+    fn extensions(&self) -> &[&str];
+}
+
 #[macro_export]
 macro_rules! syntax_struct {
     (
-        struct $Name:ident;
+        struct $Name:ident {
+            extensions: $ext:expr
+        }
     ) => {
-        struct $Name;
+        struct $Name {
+            extensions: &'static [&'static str],
+        }
+
+        impl $Name {
+            fn new() -> Self {
+                $Name { extensions: &$ext }
+            }
+        }
 
         impl SyntaxHighlight for $Name {
             fn syntax_color(&self, highlight_type: &HighlightType) -> Color {
@@ -699,22 +735,59 @@ macro_rules! syntax_struct {
                 }
             }
 
+            fn extensions(&self) -> &[&str] {
+                self.extensions
+            }
+
             fn update_syntax(&self, at: usize, editor_rows: &mut Vec<Row>) {
                 let current_row = &mut editor_rows[at];
                 macro_rules! add {
-                    ($h:expr) => {
-                        current_row.highlight.push($h)
-                    };
+                    ($h:expr) => {{
+                        current_row.highlight.push($h);
+                        $h
+                    }};
                 }
 
                 current_row.highlight = Vec::with_capacity(current_row.render.len());
-                let chars = current_row.render.chars();
-                for c in chars {
-                    if c.is_digit(10) {
-                        add!(HighlightType::Number);
+                let chars = &current_row.render.chars().collect::<Vec<char>>();
+
+                // for c in chars {
+                //     if c.is_digit(10) {
+                //         add!(HighlightType::Number);
+                //     } else {
+                //         add!(HighlightType::Normal)
+                //     }
+                // }
+
+                let mut i = 0;
+                let mut previous_separator = true; // Define for loop person.
+                let mut previous_highlight_type = HighlightType::Normal; // Define for loop person.
+                let mut in_word = false;
+
+                /* WHILE is a queue which maybe infinitive*/
+                while i < chars.len() {
+                    /*
+                    I am a LOOPer in my house, now receive a piece which has been written a number.
+                    The number is position of character in render row.
+                    Now what I do is recognize all number which consist of character in render row.
+                    */
+                    let c = chars[i];
+
+                    /* Loop person are watching each item being in loop.*/
+                    let highlight_type = if (c.is_digit(10) || c == '.')
+                        && (previous_separator
+                            || matches!(previous_highlight_type, HighlightType::Number))
+                    {
+                        add!(HighlightType::Number)
                     } else {
                         add!(HighlightType::Normal)
-                    }
+                    };
+
+                    /* I do these for myself. */
+                    // For next loop
+                    previous_highlight_type = highlight_type;
+                    previous_separator = is_separator(c);
+                    i += 1;
                 }
                 assert_eq!(current_row.render.len(), current_row.highlight.len())
             }
