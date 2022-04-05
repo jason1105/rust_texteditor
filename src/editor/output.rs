@@ -29,6 +29,8 @@ pub enum HighlightType {
     Normal,
     Number,
     SearchMatch,
+    String,
+    CharLiteral,
 }
 
 #[derive(Default)]
@@ -417,7 +419,11 @@ impl Output {
         let info_len = cmp::min(info.len(), self.win_size.0);
         /* add the following*/
         let line_info = format!(
-            "{}/{}",
+            "{} | {}/{}",
+            self.syntax_highlight
+                .as_ref()
+                .map(|highlight| highlight.file_type())
+                .unwrap_or("No ft"),
             self.cursor_controller.cursor_y + 1,
             self.editor_rows.number_of_rows()
         );
@@ -677,7 +683,8 @@ use crate::syntax_struct;
 syntax_struct! {
     struct RustHighlight {
         // 可能有多个扩展名
-        extensions: ["rs", "rust"]  // invalid syntax, but it's ok in macro invocation, as we could fix it in macro implementation.
+        extensions: ["rs", "rust"],  // invalid syntax, but it's ok in macro invocation, as we could fix it in macro implementation.
+        file_type : "rust"
     }
 }
 
@@ -687,6 +694,8 @@ pub trait SyntaxHighlight {
     fn update_syntax(&self, at: usize, editor_rows: &mut Vec<Row>);
     // Convert type to color
     fn syntax_color(&self, highlight_type: &HighlightType) -> Color; // add method
+
+    fn file_type(&self) -> &str;
 
     // Write to editor.output.buffer
     fn color_row(&self, render: &str, highlight: &[HighlightType], out: &mut EditorContents) {
@@ -713,16 +722,21 @@ pub trait SyntaxHighlight {
 macro_rules! syntax_struct {
     (
         struct $Name:ident {
-            extensions: $ext:expr
+            extensions: $ext:expr,
+            file_type: $file_type:expr
         }
     ) => {
         struct $Name {
             extensions: &'static [&'static str],
+            file_type: &'static str,
         }
 
         impl $Name {
             fn new() -> Self {
-                $Name { extensions: &$ext }
+                $Name {
+                    extensions: &$ext,
+                    file_type: &$file_type,
+                }
             }
         }
 
@@ -732,11 +746,17 @@ macro_rules! syntax_struct {
                     HighlightType::Normal => Color::Reset,
                     HighlightType::Number => Color::Cyan,
                     HighlightType::SearchMatch => Color::Blue,
+                    HighlightType::String => Color::Green,
+                    HighlightType::CharLiteral => Color::DarkGreen,
                 }
             }
 
             fn extensions(&self) -> &[&str] {
                 self.extensions
+            }
+
+            fn file_type(&self) -> &str {
+                self.file_type
             }
 
             fn update_syntax(&self, at: usize, editor_rows: &mut Vec<Row>) {
