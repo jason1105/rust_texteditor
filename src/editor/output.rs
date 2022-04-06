@@ -23,21 +23,12 @@ pub mod cursor_controller;
 static VERSION: &str = "0.1.0";
 static TAB_STOP: usize = 8;
 
-/// Describe what type each char should be given in specific syntax rules.
-#[derive(Clone, Copy)]
-pub enum HighlightType {
-    Normal,
-    Number,
-    SearchMatch,
-    String,
-    CharLiteral,
-}
-
 #[derive(Default)]
 pub struct Row {
     row_content: String,
     render: String,
     highlight: Vec<HighlightType>, // Save the type of each char in render of this row. So that we can render it in different color.
+    is_comment: bool,
 }
 
 impl Row {
@@ -46,6 +37,7 @@ impl Row {
             row_content,
             render,
             highlight: Vec::new(),
+            is_comment: false,
         }
     }
 
@@ -679,6 +671,17 @@ enum Direction {
 
 use crate::syntax_struct;
 
+/// Describe what type each char should be given in specific syntax rules.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum HighlightType {
+    Normal,
+    Number,
+    SearchMatch,
+    String,
+    CharLiteral,
+    Comment,
+}
+
 /// 这个宏的作用是将一些数据转换成一个结构体, 虽然传入宏的参数看起来像结构体, 但并不是结构体.
 syntax_struct! {
     struct RustHighlight {
@@ -746,8 +749,10 @@ macro_rules! syntax_struct {
                     HighlightType::Normal => Color::Reset,
                     HighlightType::Number => Color::Cyan,
                     HighlightType::SearchMatch => Color::Blue,
-                    HighlightType::String => Color::Green,
-                    HighlightType::CharLiteral => Color::DarkGreen,
+                    HighlightType::String => Color::Magenta,
+                    HighlightType::CharLiteral => Color::DarkMagenta,
+                    HighlightType::Comment => Color::Green,
+
                 }
             }
 
@@ -760,6 +765,7 @@ macro_rules! syntax_struct {
             }
 
             fn update_syntax(&self, at: usize, editor_rows: &mut Vec<Row>) {
+                let mut in_block_comment = at>0 && editor_rows[at-1].is_comment;
                 let current_row = &mut editor_rows[at];
                 macro_rules! add {
                     ($h:expr) => {{
@@ -779,13 +785,19 @@ macro_rules! syntax_struct {
                 //     }
                 // }
 
+
                 let mut i = 0;
                 let mut previous_separator = true; // Define for loop person.
                 let mut previous_highlight_type = HighlightType::Normal; // Define for loop person.
-                let mut in_word = false;
+                let mut in_line_comment = false;
+
+                let mut in_string = None;
 
                 /* WHILE is a queue which maybe infinitive*/
                 while i < chars.len() {
+                    if i > 0 {
+                        previous_highlight_type = current_row.highlight[i-1];
+                    }
                     /*
                     I am a LOOPer in my house, now receive a piece which has been written a number.
                     The number is position of character in render row.
@@ -793,22 +805,97 @@ macro_rules! syntax_struct {
                     */
                     let c = chars[i];
 
+                    /* Comment block */
+                    if in_block_comment {
+                        if c == '*' && i+1< chars.len() && chars[i+1] == '/' {
+                            in_block_comment = false;
+                            (0..2).for_each(|_| {
+                                add!{
+                                    HighlightType::Comment
+                                };
+                            });
+                            i += 2;
+                        } else {
+                            add!{
+                                HighlightType::Comment
+                            };
+                            i += 1;
+                        }
+
+                        continue;
+                    } else if c == '/' && i+1< chars.len() && chars[i+1] == '*' {
+                        in_block_comment = true;
+                        (0..2).for_each(|_| {
+                            add!{
+                                HighlightType::Comment
+                            };
+                        });
+                        i += 2;
+                        continue;
+                    }
+
+                    /* Comment */
+                    if in_line_comment {
+                        add!{
+                            HighlightType::Comment
+                        };
+                        i += 1;
+                        continue;
+                    } else if c == '/' && i+1< chars.len() && chars[i+1] == '/' {
+                        in_line_comment = true;
+                        add!{
+                            HighlightType::Comment
+                        };
+                        i += 1;
+                        continue;
+                    }
+
+                    /* String or Character */
+                    if let Some(start_c) = in_string {
+                        add!{
+                            if start_c == '"' {HighlightType::String} else {HighlightType::CharLiteral}
+                        };
+
+                        if c == '\\' && i + 1 < chars.len() {
+                            i += 1;
+                            add!{
+                                if start_c == '"' {HighlightType::String} else {HighlightType::CharLiteral}
+                            };
+                        }
+
+                        if c == start_c {
+                            in_string = None;
+                        }
+
+                        i += 1;
+                        continue;
+                    } else if '"' == c || '\'' == c {
+                        in_string = Some(c);
+                        add!{
+                            if c == '"' {HighlightType::String} else {HighlightType::CharLiteral}
+                        };
+
+                        i += 1;
+                        continue;
+                    }
+
+                    /* Number */
                     /* Loop person are watching each item being in loop.*/
-                    let highlight_type = if (c.is_digit(10) || c == '.')
+                    if (c.is_digit(10) || c == '.')
                         && (previous_separator
                             || matches!(previous_highlight_type, HighlightType::Number))
                     {
-                        add!(HighlightType::Number)
+                        add!(HighlightType::Number);
                     } else {
-                        add!(HighlightType::Normal)
-                    };
+                        add!(HighlightType::Normal);
+                    }
 
                     /* I do these for myself. */
                     // For next loop
-                    previous_highlight_type = highlight_type;
                     previous_separator = is_separator(c);
                     i += 1;
                 }
+                current_row.is_comment = in_block_comment;
                 assert_eq!(current_row.render.len(), current_row.highlight.len())
             }
         }
