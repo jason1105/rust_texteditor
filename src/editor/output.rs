@@ -7,6 +7,9 @@ use crossterm::{
 };
 use itertools::Itertools;
 use itertools::*;
+use std::cell::RefCell;
+use std::fs::File;
+use std::sync::Mutex;
 use std::{
     cmp, env, fs,
     io::{self, stdout, ErrorKind, Write},
@@ -680,6 +683,7 @@ pub enum HighlightType {
     String,
     CharLiteral,
     Comment,
+    Other(Color),
 }
 
 /// 这个宏的作用是将一些数据转换成一个结构体, 虽然传入宏的参数看起来像结构体, 但并不是结构体.
@@ -687,10 +691,21 @@ syntax_struct! {
     struct RustHighlight {
         // 可能有多个扩展名
         extensions: ["rs", "rust"],  // invalid syntax, but it's ok in macro invocation, as we could fix it in macro implementation.
-        file_type : "rust"
+        file_type : "rust",
+        keywords : {
+            [Color::Yellow;
+                "mod","unsafe","extern","crate","use","type","struct","enum","union","const","static",
+                "mut","let","if","else","impl","trait","for","fn","self","Self", "while", "true","false",
+                "in","continue","break","loop","match", "pub"
+            ],
+            [Color::Reset; "isize","i8","i16","i32","i64","usize","u8","u16","u32","u64","f32","f64",
+                "char","str","bool"
+            ]
+        }
     }
 }
 
+use std::{thread, time};
 /// This is a role who is responsible for highlight.
 pub trait SyntaxHighlight {
     // Update the syntax highlighting for the chars in current line.
@@ -721,12 +736,49 @@ pub trait SyntaxHighlight {
     fn extensions(&self) -> &[&str];
 }
 
+use super::reader::Reader;
+use crossterm::event::{KeyEvent, KeyModifiers};
+
+#[macro_export]
+macro_rules! log_print {
+    ($($arg : tt) *) => {
+        LOG.lock().unwrap().write(format!($($arg)*).as_bytes());
+    };
+}
+
+lazy_static! {
+    static ref LOG: Mutex<Log> = Mutex::new(Log::new());
+}
+
+struct Log {
+    file: Option<File>,
+}
+
+impl Log {
+    fn new() -> Self {
+        let file = fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open("./app.log")
+            .unwrap();
+        Self { file: Some(file) }
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        let file = self.file.as_mut().unwrap();
+        file.write_all(bytes).unwrap();
+        file.write_all(b"\n").unwrap();
+    }
+}
+
+use crate::log_print;
+
 #[macro_export]
 macro_rules! syntax_struct {
     (
         struct $Name:ident {
             extensions: $ext:expr,
-            file_type: $file_type:expr
+            file_type: $file_type:expr,
+            keywords: {$([$color:expr; $($keyword:expr),*]),*}
         }
     ) => {
         struct $Name {
@@ -752,7 +804,7 @@ macro_rules! syntax_struct {
                     HighlightType::String => Color::Magenta,
                     HighlightType::CharLiteral => Color::DarkMagenta,
                     HighlightType::Comment => Color::Green,
-
+                    HighlightType::Other(color) => *color
                 }
             }
 
@@ -775,7 +827,7 @@ macro_rules! syntax_struct {
                 }
 
                 current_row.highlight = Vec::with_capacity(current_row.render.len());
-                let chars = &current_row.render.chars().collect::<Vec<char>>();
+                let chars = &current_row.render.chars().collect::<Vec<char>>(); // slice
 
                 // for c in chars {
                 //     if c.is_digit(10) {
@@ -848,6 +900,36 @@ macro_rules! syntax_struct {
                         };
                         i += 1;
                         continue;
+                    }
+
+                    /* Keyword */
+                    if let None = in_string {
+                        if previous_separator {
+                            let mut j = i;
+
+                            // find word
+                            while j < chars.len() && !is_separator(chars[j]) {
+                                j += 1;
+                            }
+                            let word:String = chars[i..j].iter().collect::<String>();
+
+                            $(
+                                let color = $color;
+                                let keywords = [$($keyword),*];
+
+                                // match word with keywords
+                                if keywords.iter().any(|&keyword| keyword==word){
+                                    (i..j).for_each(|_| {
+                                        add!{
+                                            HighlightType::Other(color)
+                                        };
+                                    });
+                                    i=j;
+                                    previous_separator = false;
+                                    continue;
+                                };
+                            )*
+                        }
                     }
 
                     /* String or Character */

@@ -1,6 +1,9 @@
 use crossterm::terminal;
 use editor::output::Output;
 
+#[macro_use]
+extern crate lazy_static;
+
 pub mod editor;
 
 struct Cleaner;

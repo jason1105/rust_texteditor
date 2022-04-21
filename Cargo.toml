@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 crossterm = "0.21.0" #add this dependency
 itertools = "0.10.2"
+lazy_static = "1.4.0"
